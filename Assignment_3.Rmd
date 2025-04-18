@@ -13,7 +13,7 @@ https://github.com/SyedHassan20/causal-inference/blob/main/Assignment_3.Rmd
 ```{r}
 #installing packages
 #UNCOMMENT THIS TO INSTALL PACKAGES
-#install.packages(c("readr", "dplyr", "ggplot2", "caret", "Matching", "sensemakr", "rio", "Synth, "curl", "googledrive"))
+install.packages(c("readr", "dplyr", "ggplot2", "caret", "Matching", "sensemakr", "rio", "Synth","curl", "googledrive", "lubridate"))
 ```
 
 ```{r}
