@@ -1,0 +1,946 @@
+---
+title: "Assignment 3: Causal Inference"
+output: 
+  pdf_document:
+    latex_engine: xelatex
+---
+
+## Code Workbook on Github:
+
+```{r}
+#installing packages
+#UNCOMMENT THIS TO INSTALL PACKAGES
+#install.packages(c("readr", "dplyr", "ggplot2", "caret", "Matching", "sensemakr", "rio", "Synth, "curl", "googledrive"))
+```
+
+```{r}
+#loading packages
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(caret)
+library(Matching)
+
+```
+
+## **(I) Original Lalonde Dataset**
+
+### **Using the experimental data from Lalonde (1986):**
+
+### **1. Obtain the point estimate and 95% confidence interval for the treatment effect. Is this the true treatment effect? ATE? ATT? ATC? Discuss briefly.**
+
+```{r}
+#loading data
+data(lalonde)
+
+#checking the structure of the dataset
+str(lalonde)
+
+#calculate point estimate for the treatment effect by comparing the means
+treated <- lalonde[lalonde$treat == 1, "re78"]  # earnings for treated individuals
+control <- lalonde[lalonde$treat == 0, "re78"]  # earnings for control individuals
+
+#point estimate: difference in means between treated and control
+point_estimate <- mean(treated) - mean(control)
+cat("Point estimate:", point_estimate, "\n" )  # this is the point estimate for the treatment effect
+
+#fit a linear model to estimate the treatment effect and obtain the confidence interval
+model <- lm(re78 ~ treat, data = lalonde)
+conf_interval <- confint(model, "treat", level = 0.95)
+cat("Confidence Interval: ", conf_interval)  # 95% confidence interval for the treatment effect
+```
+
+#### Point Estimate
+
+The point estimate for the treatment effect is the coefficient for the treatment variable (`treat`) in the linear model, which is 1794.343. This means that, on average, the individuals who received the treatment (the job training program) earned approximately 1794.343 units more than those in the control group, after controlling for other factors
+
+#### 95% Confidence Interval:
+
+The **95% confidence interval** for the treatment effect is given as:
+
+-   **Lower bound**: 550.5749
+
+-   **Upper bound**: 3038.111
+
+This means we are 95% confident that the true treatment effect lies between 550.57 and 3038.11.
+
+The point estimate and the confidence interval both represent the **Average Treatment Effect (ATE)**, which is the average effect of the treatment on the entire population, including both treated and control individuals. Since the Lalonde dataset is based on a randomized experiment, the treatment assignment is independent of potential outcomes. Therefore, this difference in means provides an unbiased estimate of the ATE. In this case, the ATE is approximately 1794.34, with a 95% confidence interval ranging from 550.57 to 3038.11, reflecting the uncertainty in this estimate.
+
+The **True Treatment Effect** refers to the actual effect of the treatment on an individual, but this value is unknown because we cannot observe the counterfactual (what would have happened to treated individuals had they not received the treatment). Thus, the ATE serves as the best estimate of the true effect, with the true treatment effect likely lying within the given range.
+
+The **Average Treatment Effect on the Treated (ATT)** focuses solely on the treated group and requires methods like matching or propensity score to estimate, as it compares the outcomes of treated individuals to what would have occurred in their absence of treatment. Similarly, the **Average Treatment Effect on the Controls (ATC)** estimates the effect for the control group, assuming they had received the treatment, which also requires specialized methods like matching or instrumental variables. In contrast, the ATE we estimate here uses data from both groups and does not isolate the ATT or ATC. Estimating those would require either restricting to one group or adjusting for covariate imbalance, which is not necessary in this randomized design. Therefore, the point estimate of 1794.34 is the ATE, and the confidence interval captures the uncertainty around this estimate, while ATT and ATC require different analytical approaches.
+
+### **3. Use the "quantile" function to obtain quantile effects for every quantile from 1% to 99%. Create a data visualization showing the quantile effects and drawing confidence intervals for them. (Add the mean tmt effect as a horizontal line). Are these the true quantile effects? Explain.**
+
+```{r}
+
+#defining quantiles from 1% to 99%
+quantiles <- seq(0.01, 0.99, by = 0.01)
+
+#calculating quantile treatment effects manually
+qte <- sapply(quantiles, function(q) {
+  quantile(lalonde$re78[lalonde$treat == 1], q) - 
+    quantile(lalonde$re78[lalonde$treat == 0], q)
+})
+
+#calculating mean treatment effect
+mean_treat_effect <- mean(lalonde$re78[lalonde$treat == 1]) - 
+                     mean(lalonde$re78[lalonde$treat == 0])
+
+#creating data frame for plotting
+qte_df <- data.frame(
+  quantile = quantiles,
+  qte = qte
+)
+
+#plotting quantile treatment effects with mean effect line
+ggplot(qte_df, aes(x = quantile, y = qte)) +
+  geom_line(color = "blue") +
+  geom_hline(yintercept = mean_treat_effect, linetype = "dashed", color = "red") +
+  labs(title = "Empirical Quantile Treatment Effects",
+       y = "Treatment Effect on re78 (in dollars)",
+       x = "Quantile") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+# bootstrap to get CI bands
+set.seed(42)
+B <- 1000
+qte_boot <- replicate(B, {
+  samp <- lalonde[sample(nrow(lalonde), replace=TRUE), ]
+  sapply(quantiles, function(q) {
+    quantile(samp$re78[samp$treat==1], q) -
+    quantile(samp$re78[samp$treat==0], q)
+  })
+})
+ci_lower <- apply(qte_boot, 1, quantile, probs=0.025)
+ci_upper <- apply(qte_boot, 1, quantile, probs=0.975)
+
+qte_df$ci_low <- ci_lower
+qte_df$ci_high <- ci_upper
+
+ggplot(qte_df, aes(quantile, qte)) +
+  geom_ribbon(aes(ymin=ci_low, ymax=ci_high), fill="grey80") +
+  geom_line() +
+  geom_hline(yintercept=mean_treat_effect, linetype="dashed") +
+  labs(title="Quantile Treatment Effects with 95% CI",
+       x="Quantile", y="QTE (re78 in USD)") +
+  theme_minimal()+
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+These estimates can be interpreted as quantile treatment effects under the assumption that the treatment and control groups are comparable. In randomized experiments like Lalonde’s, this assumption holds by design, so the quantile differences can be interpreted as causal effects. However, in observational data, these comparisons may reflect both treatment effects and pre-existing group differences unless adjusted for covariate imbalance through methods like matching or regression. Additionally, since we cannot observe counterfactual outcomes (i.e., what would have happened to each individual under the opposite treatment status), these remain estimates rather than the true individual-level effects.
+
+The shaded region around the QTE curve represents the 95% confidence interval, which tells us about the uncertainty around the estimated treatment effect at each quantile. As expected, the confidence bands widen near the tails of the distribution due to greater variability and fewer observations. Still, these estimates offer valuable insight into treatment effect heterogeneity. The QTEs highlight how the treatment effect varies across the outcome distribution. For instance, the program appears to have little impact at lower quantiles but increasingly positive effects at higher quantiles, suggesting that the intervention may benefit higher earners more substantially.
+
+Still, they provide valuable insight into the heterogeneity of treatment effects across the outcome distribution.
+
+## **(II) Matching Using an Observational Version of 'Lalonde' Data**
+
+### **1. Combine the treatment group (from part I above) and the CPS-2 data set, which you can obtain from Dehejia's NBER website. (Email if you can't find it.)**
+
+```{r}
+#filtering to keep only treated individuals from experimental data
+treatment_group <- lalonde %>% filter(treat == 1)
+
+#construct the direct download URL
+url <- "https://drive.google.com/uc?export=download&id=1wVFUMxRqpQku2tIuDOaxiK8y7U-ea1y6"
+
+#download the file
+download.file(url, destfile = "cps_2.txt", mode = "wb")
+
+#read the file into R
+cps_2 <- read.table("cps_2.txt", header = FALSE)
+
+#remove last column (dummy variable not needed for matching)
+cps_2 <- cps_2[, -ncol(cps_2)]  #removing last column
+
+#assign column names based on Dehejia’s format
+colnames(cps_2) <- c("black", "age", "education", "hispanic", "married", 
+                     "nodegree", "re74", "re75", "re78")
+
+#rename to match lalonde naming
+cps_2 <- cps_2 %>%
+  rename(
+    educ = education,
+    hisp = hispanic,
+    nodegr = nodegree
+  )
+
+#reorder columns to match lalonde exactly
+cps_2 <- cps_2 %>%
+ dplyr::select(age, educ, black, hisp, married, nodegr, re74, re75, re78)
+
+#add treatment indicator
+cps_2$treat <- 0  #manually assign treat=0, to mark them as observational controls
+
+#combine datasets
+combined_data <- bind_rows(treatment_group, cps_2)
+
+#check result
+table(combined_data$treat)
+str(combined_data)
+
+```
+
+### **2. Hypothesize briefly about selection bias in this dataset (guess the sign.)**
+
+The estimated treatment effect using this observational dataset (without adjustment) will likely be **biased downward,** underestimating the true impact of the treatment.
+
+In this combined dataset, selection bias is likely present because the treatment group comes from an experimental program targeting disadvantaged individuals, while the control group (CPS-2) comes from a general population survey with higher baseline earnings and more stable employment histories. As a result, even before the treatment was applied, individuals in the CPS-2 control group were likely to have better labor market prospects than those in the treated group.
+
+Hence, because of these baseline imbalances, a simple comparison of post-treatment earnings between the two groups (without adjusting for covariates) will likely **underestimate the true treatment effect**. This is due to the fact that the treated individuals started from a more disadvantaged position, making their earnings gains appear smaller relative to the already advantaged control group.
+
+This is a negative selection bias, meaning: Observed Effect \< True Effect
+
+### **3. Estimate the prima facie treatment effect (naive difference). Comment on the connections to your answer in part I above, and also your answer to (2).**
+
+```{r}
+
+#calculate average earnings for treated and control groups
+treated_mean <- mean(combined_data$re78[combined_data$treat == 1], na.rm = TRUE)
+control_mean <- mean(combined_data$re78[combined_data$treat == 0], na.rm = TRUE)
+
+#naive difference in means (prima facie treatment effect)
+naive_effect <- treated_mean - control_mean
+cat("Naive (prima facie) treatment effect:", naive_effect, "\n")
+
+
+```
+
+The prima facie treatment effect is the raw difference in mean outcomes between the two groups. In contrast to Part I (where we used randomized experimental data, giving us an unbiased estimate of the Average Treatment Effect (ATE)), this estimate does not account for differences in baseline characteristics between the treatment and control groups.
+
+In Part II (2), we hypothesized that the CPS-2 control group had higher baseline earnings and socioeconomic advantages compared to the Lalonde treatment group. As a result, we expected negative selection bias, meaning that the naive estimate would understate the true effect of the program.
+
+Given that the naive estimate is lower than the ATE from Part I (≈ 1794), this supports our hypothesis:
+
+Observed Effect \< True Effect, due to negative selection bias.
+
+### **4. Perform propensity score matching (you decide the propensitys core model) and obtain treatment effect estimates. Do this twice: once using the linear logit, and again using type = "response" probabilities.**
+
+```{r}
+#we will use the combined dataset (treatment group from lalonde, controls from CPS-2)
+#drop only columns that are present and unwanted
+combined_data <- combined_data[, !colnames(combined_data) %in% c("education", "hispanic", "nodegree", "some_dummy")]
+
+#build the logistic model for treatment assignment
+ps_model <- glm(treat ~ age + educ + black + hisp + married + nodegr + re74 + re75,
+                data = combined_data, family = binomial)
+
+#extract linear logit scores (default fitted values in log-odds scale)
+logit_scores <- as.matrix(predict(ps_model, type = "link")) # already in logit scale internally
+
+#extract response probabilities (predicted probabilities)
+pscore_probs <- as.matrix(predict(ps_model, type = "response"))  # probabilities
+
+#perform matching using linear logit scores
+match_logit <- Match(Y = combined_data$re78,
+                     Tr = combined_data$treat,
+                     X = logit_scores,
+                     M = 1)  # nearest neighbor matching
+
+#perform matching using response probabilities
+match_response <- Match(Y = combined_data$re78,
+                        Tr = combined_data$treat,
+                        X = pscore_probs,
+                        M = 1)
+
+#view treatment effects and p-values
+summary(match_logit)
+summary(match_response)
+
+#assess covariate balance
+balance_logit <- MatchBalance(treat ~ age + educ + black + hisp + married + nodegr + re74 + re75, 
+                              data = combined_data, match.out = match_logit)
+
+balance_response <- MatchBalance(treat ~ age + educ + black + hisp + married + nodegr + re74 + re75, 
+                                 data = combined_data, match.out = match_response)
+
+```
+
+### **Discuss:**
+
+### **(i) Which treatment effect estimand you're estimating?**
+
+We are estimating the Average Treatment effect on the Treated (ATT). This is because we matched treated individuals from the experimental data (`lalonde`) to untreated individuals from the CPS-2 observational dataset, and the `Matching::Match()` function with `Tr = combined_data$treat` and `M = 1` performs nearest neighbor matching to estimate the treatment effect for those who received the treatment. It is because we are matching treated individuals to similar untreated individuals, the estimate reflects the average treatment effect for those who actually received the intervention (ATT). The estimand, therefore, reflects the causal effect of the treatment on those who actually received it.
+
+### **(ii) Which of the two propensity score results seems more accurate?**
+
+We performed matching based on:
+
+-   **Linear logit scores** (output: `match_logit`)
+
+-   **Predicted response probabilities** (output: `match_response`)
+
+Both approaches show **similar point estimates** and **non-significant p-values**:
+
+**Table 1** shows the results of the two different propensity score matching methods
+
+| Matching Method        | Estimate | SE     | T-stat | p-value |
+|------------------------|----------|--------|--------|---------|
+| Linear Logit Scores    | 6135.3   | 5084   | 1.2068 | 0.2275  |
+| Response Probabilities | 6150.7   | 5119.1 | 1.2015 | 0.2296  |
+
+Although both are statistically non-significant, the **response-based matching produced a higher number of matched controls (1529 vs. 1104 unweighted)**, suggesting a better fit for broader matching. Although response-based matching produced more matched controls, balance diagnostics suggest that this came at the cost of poorer covariate balance, particularly in `educ` and `hisp`. However, accuracy also depends on balance, which is discussed below.
+
+### **(c) The treatment effects and p-values?**
+
+As shown in **Table I**, the estimated treatment effects using both propensity score methods were economically meaningful but statistically insignificant. The **logit-based matching** yielded an average treatment effect on the treated (ATT) estimate of **\$6,135**, with a standard error of **5,084** and a **p-value of 0.2275**. This result suggests insufficient evidence to reject the null hypothesis that the treatment had no effect on earnings. Similarly, the **response probability-based matching** produced a nearly identical ATT estimate of **\$6,150**, with a standard error of **5,119** and a **p-value of 0.2296**. In both approaches, while the estimated treatment effects suggest a substantial increase in earnings of over \$6,000, the high variance leads to wide uncertainty and a lack of statistical significance.
+
+**Note:** During propensity score model fitting, a warning was generated: `glm.fit: fitted probabilities numerically 0 or 1 occurred.` This suggests potential issues with perfect separation or rare combinations of covariates, which can compromise overlap.
+
+### **(d) Which of the two propensity score methods produced better balance? For all matching analysis, you must use Sekhon's Matching library.**
+
+#### Covariate Balance After Matching (Linear Logit Propensity Scores)
+
+| **Covariate** | **Std. Mean Diff (After)** | **T-test p (After)** | **Balance Interpretation**                       |
+|-----------------|-----------------|-----------------|---------------------|
+| **age**       | –77.93 (↑ from –34.08)     | \< 2.22e–16          | Balance worsened — SMD moved further from 0      |
+| **educ**      | 242.69 (↑ from –44.37)     | \< 2.22e–16          | Much worse — very large imbalance introduced     |
+| **black**     | 231.31 (no change)         | \< 2.22e–16          | No change — imbalance remained                   |
+| **hisp**      | –365.71 (↓ from –22.27)    | \< 2.22e–16          | Worse — SMD more extreme after matching          |
+| **married**   | 44.34 (↑ from 26.78)       | 2.35e–07             | Worse — imbalance increased                      |
+| **nodegr**    | –56.22 (↑ from 54.49)      | 1.24e–12             | Slightly worse — still large imbalance           |
+| **re74**      | 42.86 (no change)          | 2.25e–08             | No change — balance not improved                 |
+| **re75**      | 43.54 (↓ from –223.53)     | 5.05e–08             | Improved — large imbalance reduced significantly |
+
+#### Covariate Balance After Matching (Response Probabilities Propensity Scores)
+
+| **Covariate** | **Std. Mean Diff (After)** | **T-test p (After)** | **Balance Interpretation**                       |
+|-----------------|-----------------|-----------------|---------------------|
+| **age**       | –75.79 (↑ from –34.08)     | \< 2.22e–16          | Balance worsened — SMD moved further from 0      |
+| **educ**      | 242.94 (↑ from –44.37)     | \< 2.22e–16          | Much worse — large imbalance introduced          |
+| **black**     | 231.31 (no change)         | \< 2.22e–16          | No change — imbalance remained                   |
+| **hisp**      | –362.42 (↓ from –22.27)    | \< 2.22e–16          | Worse — SMD became more extreme                  |
+| **married**   | 42.81 (↑ from 26.78)       | 2.35e–07             | Worse — imbalance increased                      |
+| **nodegr**    | –56.37 (↑ from 54.49)      | 1.17e–12             | Slightly worse — still far from balanced         |
+| **re74**      | 42.86 (no change)          | 2.25e–08             | No improvement — SMD unchanged                   |
+| **re75**      | 43.34 (↓ from –223.53)     | 5.05e–08             | Improved — large imbalance reduced significantly |
+
+Balance worsened or remained poor for key covariates (e.g., `educ`, `black`, `hisp`), with SMDs \> 200%. This indicates that both logit and response-based matching failed to sufficiently reduce bias in these variables. The **`nodegr`** variable also remained imbalanced, with only slight differences in standardized mean differences before and after matching. While **`re75`** showed substantial improvement in both approaches, most other covariates either saw increased imbalance or no change at all.
+
+Therefore, neither method achieved satisfactory covariate balance. The logit-based matching slightly outperformed response-based matching in variables like `re75` and `nodegr`, but still failed to balance key covariates. The response probability-based approach, despite matching a larger number of units, introduced or exacerbated imbalance in several covariates, including `educ` and `hisp`. These results highlight that matching quality should be evaluated not just by sample size but by post-matching covariate diagnostics, which indicate that further adjustment may be necessary.
+
+### **5. Perform genetic matching to produce the best balance (w.r.t. the default genmatch fitness function), while still retaining all treated units. Discuss/compare your results to those of (4) above.**
+
+```{r}
+#set seed for reproducibility
+set.seed(123)
+
+#extract treatment indicator
+Tr <- combined_data$treat  #treatment indicator
+
+#extract outcome variable
+Y <- combined_data$re78  #outcome: earnings in 1978
+
+#select covariates for matching
+X <- combined_data %>%
+  dplyr::select(age, educ, black, hisp, married, nodegr, re74, re75) %>%
+  as.matrix()  #covariate matrix
+
+#perform genetic matching to optimize balance
+genout <- GenMatch(Tr = Tr,
+                   X = X,
+                   M = 1,
+                   replace = FALSE,
+                   ties = TRUE)  #optimized weight search
+
+#apply matching using weights from GenMatch
+match_genetic <- Match(Y = Y,
+                       Tr = Tr,
+                       X = X,
+                       M = 1,
+                       Weight.matrix = genout)  #perform matching
+
+#check balance after genetic matching
+balance_genetic <- MatchBalance(Tr ~ age + educ + black + hisp + married + nodegr + re74 + re75,
+                                data = combined_data,
+                                match.out = match_genetic)  #evaluate covariate balance
+
+```
+
+#### Covariate Balance After Genetic Matching
+
+| **Covariate** | **Std. Mean Diff (After)** | **T-test p (After)** | **Balance Interpretation**                                      |
+|-----------------|-----------------|-----------------|----------------------|
+| **age**       | 0.15109                    | 0.8972               | Improved — SMD ≈ 0 and p \> 0.8                                 |
+| **educ**      | –2.1507                    | 0.15674              | Improved — near zero SMD and insignificant p                    |
+| **black**     | 231.31                     | \< 2.22e–16          | No change — black not balanced due to control group being all 0 |
+| **hisp**      | 6.8387                     | 0.082433             | Improved — small SMD and moderate p-value                       |
+| **married**   | 0.0                        | 1.0                  | Perfect balance — identical proportions                         |
+| **nodegr**    | 20.158                     | 0.012518             | Improved — SMD reduced substantially                            |
+| **re74**      | 42.871                     | 2.244e–08            | No change — imbalance remained                                  |
+| **re75**      | –4.9688                    | 0.018608             | Greatly improved — huge reduction in SMD                        |
+
+**Comparison:**
+
+I have utilized three propensity score matching strategies using the `Matching` package: logit-based matching, response probability-based matching, and genetic matching to estimate the treatment effect of the National Supported Work (NSW) program on earnings in 1978. Each method was used in compariison with control group from CPS data such that the distribution of observed covariates is balanced across treated and control units which is a prerequisite for unbiased causal inference under the unconfoundedness assumption.
+
+The treatment effect estimates obtained from logit-based and response-score-based matching were quite similar: \$6,135.3 and \$6,150.7. Both estimates highlight a meaningful economic impact of the treatment, with average gains of over \$6,000 in post-treatment earnings. However, these effects were not statistically significant, with p-values exceeding 0.22 in both cases. This lack of significance might be due to the high variance in the outcome variable and residual imbalance in key covariates, particularly `educ`, `black`, and `hisp`.
+
+Covariate balance diagnostics reveal limitations of both propensity score methods. In both the logit and response-score matching, the standardized mean differences (SMDs) for `educ` exceeded 240, and for `black`, remained at 231 so they might have severe imbalance. The `hisp` and `nodegr` variables also showed deteriorated balance after matching, with large negative shifts in SMDs. While `re75` balance improved across methods, this was insufficient to compensate for the mismatches in other covariates. The T-test p-values and KS statistics further confirmed that balance did not meaningfully improve; in fact, it worsened in several cases. Additionally, although the response-based method matched more control units, this came at the cost of exacerbated imbalance in key demographic variables.
+
+In contrast, **genetic matching** significantly improved covariate balance across nearly all observed dimensions. By optimizing a distance metric through iterative search, it minimized the multivariate imbalance far better than either propensity score-based method. For instance, the SMDs for `age` and `educ` dropped to near zero (0.15 and –2.15, respectively), and `married` achieved perfect balance (SMD = 0, p = 1). Even `nodegr`, previously highly imbalanced, improved to an SMD of 20.2 with a p-value of 0.012. While balance in `black` and `re74` remained problematic, likely due to structural limitations in the control data where black individuals or those with pre-treatment earnings were underrepresented, so genetic matching still produced the most balanced matched sample overall.
+
+By comparing these three methods, we can say that while none of the methods yielded statistically significant treatment effects, genetic matching came out to be be the winner for satisfying the assumption of covariate balance. It retained all treated units and offered the best empirical foundation for interpreting treatment effects with minimized confounding.
+
+### **6. Extract the genetically matched data set and estimate the quantile effects across every quantile. Produce a data visualization comparing your "observational version of the data" quantile effects with the true quantile effects, across the quantiles.**
+
+```{r}
+#extract indices of matched treated and control units
+matched_treated_ids <- match_genetic$index.treated
+matched_control_ids <- match_genetic$index.control
+
+#subset combined_data to get the matched dataset
+matched_data <- combined_data[c(matched_treated_ids, matched_control_ids), ]
+```
+
+```{r}
+#choose quantiles
+quantiles <- seq(0.1, 0.9, by = 0.1)
+
+#separate matched treated and control groups
+treated <- matched_data %>% filter(treat == 1) %>% pull(re78)
+control <- matched_data %>% filter(treat == 0) %>% pull(re78)
+
+#calculate QTEs
+qte_estimates <- sapply(quantiles, function(q) {
+  quantile(treated, q) - quantile(control, q)
+})
+```
+
+```{r}
+#experimental group (true treated and controls)
+treated_exp <- lalonde %>% filter(treat == 1) %>% pull(re78)
+control_exp <- lalonde %>% filter(treat == 0) %>% pull(re78)
+
+#calculate true quantile treatment effects
+qte_true <- sapply(quantiles, function(q) {
+  quantile(treated_exp, q) - quantile(control_exp, q)
+})
+```
+
+```{r}
+#combine into a data frame
+qte_df <- data.frame(
+  Quantile = quantiles,
+  Genetic_Matched_QTE = qte_estimates,
+  True_QTE = qte_true
+)
+
+#plot
+library(ggplot2)
+
+ggplot(qte_df, aes(x = Quantile)) +
+  geom_line(aes(y = Genetic_Matched_QTE, color = "Genetic Matched Estimate"), linewidth = 1.2) +
+  geom_line(aes(y = True_QTE, color = "True Experimental Effect"), linetype = "dashed", linewidth = 1.2) +
+  labs(
+    title = "Quantile Treatment Effects (QTE): Genetic Match vs. Experimental",
+    y = "Treatment Effect on re78 (in USD)",
+    x = "Quantiles (τ)",
+    color = "Legend"
+  ) +
+  theme_minimal()
+
+```
+
+**Interpretation:**
+
+The plot compares the quantile treatment effects (QTEs) estimated from the genetically matched observational data to the true experimental effects across different quantiles of earnings in 1978 (`re78`). While the overall trend in both curves suggests that treatment effects increase with higher quantiles (indicating larger gains for higher earners), the genetic matched estimates consistently overstate the effect size, particularly above the median. This difference points that even with improved covariate balance via genetic matching, the observational approach may still overestimate treatment benefits, especially in the upper tail of the earnings distribution. The difference might highlight the residual bias or unobserved confounding not corrected through matching.
+
+### **7. Run Sensemakr on the genetically-matched data set and make claims about the sensitivity of your results to the possibility of hidden bias. (Choose a benchmark covariate that makes sense to you.) Do not simply copy/paste the textual output; produce your own version of this text that makes sense to you.**
+
+```{r}
+#load sensmaker
+library(sensemakr)
+
+# Run linear regression on matched data
+model <- lm(re78 ~ treat + age + educ + black + hisp + married + nodegr + re74 + re75, data = matched_data)
+
+# Run Sensemakr on the treatment variable
+sensitivity <- sensemakr(
+  model = model,
+  treatment = "treat",
+  benchmark_covariates = "age",  # You can also try "re75", etc.
+  kd = 1                         # This sets the strength of confounder relative to benchmark (e.g., age)
+)
+
+# View the summary
+summary(sensitivity)
+
+# Plot the contour of sensitivity bounds
+plot(sensitivity)
+```
+
+I used the sensemakr package and selected **age** as a benchmark covariate to assess the sensitivity of our genetically matched treatment effect to potential hidden bias. Age is a reasonable reference point since it’s moderately associated with both treatment assignment and earnings.
+
+The estimated effect of the treatment on 1978 earnings (re78) was \$5,449, with a standard error of \$1,201, showing a t-value of 4.54 which is a statistically significant result.
+
+According to the sensitivity analysis:
+
+-   The **partial R²** of the treatment with the outcome is 4.27%, meaning treatment explains that proportion of residual variation in earnings after adjusting for observed covariates.
+-   The **robustness value (RV)** is 0.19, implying that an unobserved confounder would need to explain at least 19% of the residual variance in both treatment and outcome to fully nullify the estimated effect.
+-   At the **5% significance level**, the RV drops to 11.27% which suggests that a confounder would need to explain that much joint variation to render the estimate statistically insignificant.
+
+Consequntly, unless there's a hidden variable more predictive than age of both receiving treatment and determining earnings, the observed effect is unlikely to be driven by unmeasured bias. This supports the robustness of our genetically matched estimate.
+
+## **(III) Encouragement Design and JTPA data**
+
+### The Job Training Partnership Act (JTPA) study includes an encouragement design where eligibility is used as an instrument for training participation.
+
+```{r}
+#load required packages
+library(rio)
+library(googledrive)
+
+# Deauthenticate to access public files without signing in
+drive_deauth()
+
+# Specify the file ID
+file_id <- "1u2Bfmz7UZrl9yOT3sOQdGhKrsnEO1VlD"
+
+# Download the file to a temporary location
+temp_file <- tempfile(fileext = ".dta")
+drive_download(as_id(file_id), path = temp_file, overwrite = TRUE)
+
+# Import the .dta file using rio
+jtpa <- import(temp_file)
+
+# View the first few rows
+head(jtpa)
+
+```
+
+### **1. Identify the effect of the encouragement on take-up, the intention-to-treat (ITT) effect and the local average treatment effect (LATE). Show how the WALD estimator connects all these concepts.**
+
+```{r}
+#recode encouragement: encouraged = 1 if assigned to training, else 0
+jtpa <- jtpa %>%
+  mutate(encouraged = ifelse(assignmt == 1, 1, 0))
+
+#recode treatment status: treated = 1 if actually received training, else 0
+jtpa <- jtpa %>%
+  mutate(treated = ifelse(training == 1, 1, 0))
+
+#recode outcome: use actual earnings variable
+jtpa <- jtpa %>%
+  mutate(outcome = earnings)
+
+#filter the dataset to keep only valid income values (non-missing)
+jtpa_clean <- jtpa %>%
+  filter(!is.na(outcome))
+
+#compute effect of encouragement on treatment take-up
+take_up <- jtpa_clean %>%
+  group_by(encouraged) %>%
+  summarise(mean_treated = mean(treated, na.rm = TRUE))
+
+#compute ITT: effect of encouragement on the outcome
+itt <- jtpa_clean %>%
+  group_by(encouraged) %>%
+  summarise(mean_outcome = mean(outcome, na.rm = TRUE))
+
+#compute LATE using Wald estimator: LATE = ITT / (Effect of encouragement on take-up)
+delta_d <- take_up$mean_treated[take_up$encouraged == 1] - take_up$mean_treated[take_up$encouraged == 0]
+delta_y <- itt$mean_outcome[itt$encouraged == 1] - itt$mean_outcome[itt$encouraged == 0]
+late <- delta_y / delta_d
+
+#print all results
+cat("Effect of encouragement on take-up:", round(delta_d, 4), "\n")
+cat("Intention-to-treat (ITT) effect:", round(delta_y, 4), "\n")
+cat("Local average treatment effect (LATE = ITT / Take-up Effect):", round(late, 4), "\n")
+
+```
+
+Based on the analysis conducted using the JTPA dataset, we examined a classic **encouragement design**, where random assignment to eligibility (`assignmt`) serves as an **instrumental variable** (IV) for actual participation in job training (`training`). In this setup, individuals were randomly encouraged to participate in training, but not all accepted the offer — creating natural variation in treatment exposure independent of potential outcomes. This enables causal inference under standard IV assumptions.
+
+First, we estimated the **effect of encouragement on treatment take-up**, i.e., how much more likely individuals were to participate in training if they were encouraged:
+
+$$
+\text{Take-up Effect} = P(D = 1 \mid Z = 1) - P(D = 1 \mid Z = 0)
+$$
+
+Based on our analysis, the take-up effect was **62.7 percentage points**, indicating that individuals who were encouraged were substantially more likely to receive training than those who were not. This strong first-stage relationship supports the **relevance** assumption of the IV framework.
+
+Next, we estimated the **Intention-to-Treat (ITT)** effect, which captures the effect of being encouraged, regardless of actual participation, on the outcome of interest (here, earnings):
+
+$$
+\text{ITT} = \mathbb{E}[Y \mid Z = 1] - \mathbb{E}[Y \mid Z = 0]
+$$
+
+The ITT estimate was an increase of **\$1,159.4** in average earnings for those who were encouraged, suggesting a meaningful positive impact of being offered training.
+
+To estimate the **Local Average Treatment Effect (LATE)**, the causal effect of treatment among the **compliers** (those who took up training *because* they were encouraged), we used the **Wald estimator**, which simply divides the ITT by the effect of encouragement on take-up:
+
+$$
+\text{LATE} = \frac{\text{ITT}}{\text{Encouragement Effect on Take-Up}} = \frac{1159.4}{0.627} \approx 1848.8
+$$
+
+This result implies that among compliers, participation in job training increased earnings by approximately \$1,849 on average. This aligns with the core rationale for programs like JTPA: targeted interventions can lead to substantial income gains when offered to individuals who might not otherwise seek them out. The Wald estimator plays a crucial role in linking the ITT effect to the actual treatment effect for compliers. This approach helps account for noncompliance and ensures that the estimated effect reflects the impact of training on individuals whose behavior was actually influenced by the encouragement.
+
+### **3. Interpretation: Find an external paper that has used JTPA data. Summarize the key differences or similarities between your findings and the published paper’s results.**
+
+Our analysis of the JTPA dataset shows results that are largely consistent with those reported in Bloom et al. (1997), though with some distinctions in magnitude and interpretation. While Bloom and colleagues found that job training under the JTPA program led to modest but statistically significant increases in earnings, particularly for adult men and women, our analysis identified a substantially larger local average treatment effect (LATE) of approximately \$1,849 among compliers.
+
+A key similarity lies in the first-stage relationship. In our case, eligibility (assignment to the treatment group) increased the probability of receiving training by 62.71 percentage points, which reflects strong compliance and reinforces the relevance of the instrument. This aligns with Bloom et al.’s finding that random assignment was highly predictive of actual participation, thereby validating the instrumental variable approach.
+
+Where our findings differ is in the magnitude of the treatment effect. While Bloom et al. reported modest earnings gains (e.g., \$1,000–\$2,000 depending on subgroup and follow-up period), our LATE estimate of \$1,849 suggests a relatively stronger positive impact of training on earnings for individuals whose participation was induced by encouragement. However, it's important to note that Bloom et al. (1997) used longitudinal administrative earnings data over multiple years, whereas our analysis focused on a single earnings measure (`earnings`) reported at follow-up, which may explain differences in precision and scale.
+
+So we can say that both studies affirm the value of the JTPA program, particularly when focusing on those who are responsive to being offered training. Our analysis extends this understanding by quantifying the LATE using recent tools and reinforcing the robustness of the instrumental variable design under modern replication efforts.
+
+### **4. Discuss potential threats to the** instrumental variable (IV) assumptions in this dataset, and suggest additional robustness checks.
+
+(*Assuming this question refers to my analysis rather than the Bloom et al. (1997) paper.*)
+
+While the instrumental variable (IV) strategy applied here benefits from randomized assignment (i.e., `assignmt` as an instrument for `training`), several assumptions must hold for the LATE estimate to be interpreted causally — and each is subject to potential threats in practice.
+
+**Exclusion restriction** may be violated if assignment to the program (`assignmt`) affects earnings (`earnings`) through channels other than actual training participation. For instance, individuals who were assigned to the program might gain confidence, receive additional services, or increase job-seeking efforts which could directly influence earnings regardless of whether training was completed.
+
+**Noncompliance** is present in our data, as not all individuals assigned to treatment actually received training. However, our results show that assignment increased the likelihood of treatment by 62.7 percentage points, indicating a strong first stage and thus satisfying the instrument relevance condition. We did not observe a negative first stage, which suggests the monotonicity assumption (i.e., no defiers) is less likely to be violated in this context.
+
+**Measurement error** is another potential concern. If the `training` indicator is misclassified (e.g., due to self-reporting error), or if the outcome variable (`earnings`) is noisy or top-coded, this could bias our estimates or attenuate the estimated effects toward zero.
+
+To reinforce the validity of our causal claims, several **robustness checks** can be implemented:
+
+-   **Subsample analysis**: Re-estimate the LATE on cleaner subsamples. For example, by restricting the sample to specific local offices, waves of survey collection, or cases with verified training participation.
+
+-   **Placebo tests**: Use pre-treatment earnings (e.g., `preearn`) to test for spurious effects. If assignment predicts pre-treatment outcomes, this would suggest baseline imbalance or omitted variable bias.
+
+-   **Covariate balance checks**: Conduct balance tests on baseline characteristics across encouragement groups (`assignmt == 1` vs. `assignmt == 0`). Significant differences would challenge the assumption of true randomization.
+
+-   **Model specification robustness**: Apply two-stage least squares (2SLS) using continuous outcome variables and compare LATE estimates under different model forms, including adjusted models with covariates.
+
+## **(IV) Synthetic Control**
+
+### **1. Find a synthetic control data set available on the Internet. It's fine if there's code associated with as long as that code does not include code to run a plot like Figure 7 or 8 in the "California Tobacco Paper" authored by Abaide/Diamond/Hainmueller (find it yourself). Note: you are NOT allowed to use a paper/data/code that your professor (co)-authored.**
+
+Bruhn, C., Hetterich, S., Schuck‐Paim, C., Esra Kürüm, Taylor, R. J., Lustig, R., Shapiro, E. D., Warren, J. L., Simonsen, L., & Weinberger, D. M. (2017). Estimating the population-level impact of vaccines using synthetic controls. *Proceedings of the National Academy of Sciences of the United States of America*, *114*(7), 1524–1529. <https://doi.org/10.1073/pnas.1612833114>
+
+**Github**: <https://github.com/SyedHassan20/synthetic-control/tree/master>
+
+### **Explain the research question associated with your data set. You can paraphrase from the source as long as you cite it (any way you wish). Implement synthetic control to evaluate the effect of a policy intervention or major event.**
+
+**What was the population‑level impact of introducing pneumococcal conjugate vaccines (PCVs) on all‑cause pneumonia hospitalizations?** Bruhn et al. (2017) apply the synthetic control method to nationwide administrative hospitalization data from five countries: Brazil, Chile, Ecuador, Mexico, and the United States to estimate how the rollout of PCV7 and PCV13 affected rates of all‑cause pneumonia admissions, by constructing a weighted “synthetic” counterfactual from unaffected comparator time series (e.g. other disease categories) and comparing it with the observed post‑vaccine trajectory
+
+```{r}
+#install & load required packages
+if (!require("curl"))      install.packages("curl")
+if (!require("Synth"))     install.packages("Synth")
+if (!require("lubridate")) install.packages("lubridate")
+if (!require("dplyr"))     install.packages("dplyr")
+
+library(curl)
+library(Synth)
+library(lubridate)   # parse_date_time(), year()
+library(dplyr)       # load last so its select() wins
+
+#google Drive IDs
+drive_ids <- list(
+  US = "1EYy0UvhMTTvYLVbfq68qnLnooEW3rpn-",
+  BR = "1PL_y02IqKkmA-7AdjmKvRLg_Z3XrgCI9",
+  CL = "194F_NaZnaKh3C_6WPekVV1LZSx0Y818s",
+  EC = "1s92nJlVsdMkOR5JhiI9HXZCfypg1I5zp",
+  MX = "11WWVdWQfwgfHUozNmvqJeeg-tKNRSJOs"
+)
+```
+
+```{r}
+#download & read each CSV
+datasets <- lapply(drive_ids, function(id) {
+  tmp <- tempfile(fileext = ".csv")
+  curl::curl_download(
+    paste0("https://drive.google.com/uc?export=download&id=", id),
+    tmp
+  )
+  read.csv(tmp, stringsAsFactors = FALSE)
+})
+names(datasets) <- names(drive_ids)
+```
+
+```{r}
+#column, label, and infant‑group maps
+col_map      <- list(US="m_ACP", BR="J12_18", CL="J12_18", EC="J12_18", MX="J12_18")
+label_map    <- list(US="US pneu", BR="Brazil", CL="Chile", EC="Ecuador", MX="Mexico")
+infant_group <- list(US=9,       BR=9,      CL=92,      EC=9,       MX=9)
+```
+
+```{r}
+#tidy & combine; flexible date parsing
+panel <- bind_rows(lapply(names(datasets), function(code) {
+  df       <- datasets[[code]]
+  pneu_col <- col_map[[code]]
+  ig       <- infant_group[[code]]
+  
+  df %>%
+    mutate(
+      country = label_map[[code]],
+      date    = parse_date_time(date, orders = c("Y-m-d", "m/d/Y")),
+      year    = year(date)
+    ) %>%
+    filter(age_group == ig) %>%
+    rename(outcome = !!rlang::sym(pneu_col)) %>%
+    dplyr::select(country, year, outcome)    # explicitly dplyr::select
+}))
+
+```
+
+```{r}
+#aggregate to annual totals
+panel_yearly <- panel %>%
+  group_by(country, year) %>%
+  summarise(outcome = sum(as.numeric(outcome), na.rm = TRUE), .groups = "drop")
+
+#assign numeric unit IDs
+coverage <- panel_yearly %>%
+  group_by(country) %>%
+  summarise(min_year = min(year), max_year = max(year), .groups = "drop")
+
+id_map <- tibble::tibble(
+  country = coverage$country,
+  unit_id = seq_len(nrow(coverage))
+)
+
+panel_yearly <- panel_yearly %>%
+  left_join(id_map, by = "country")
+```
+
+```{r}
+#define treated & control units
+treated_country <- "US pneu"
+treated_id      <- id_map$unit_id[id_map$country == treated_country]
+control_ids     <- setdiff(id_map$unit_id, treated_id)
+
+#compute truly balanced years (present for all 5 countries)
+year_counts    <- panel_yearly %>% count(year)
+n_countries    <- n_distinct(panel_yearly$country)
+balanced_years <- year_counts %>% filter(n == n_countries) %>% pull(year)
+message("Balanced years (all 5 countries): ", paste(balanced_years, collapse = ", "))
+
+#specify intervention year and define pre-period
+intervention_year <- 2010
+pre_period        <- balanced_years[balanced_years < intervention_year]
+stopifnot(length(pre_period) > 0)
+```
+
+```{r}
+#subset to the balanced panel
+panel_df <- panel_yearly %>%
+  filter(year %in% balanced_years) %>%
+  as.data.frame()
+
+#prepare dataprep for Synth
+dp <- dataprep(
+  foo                   = panel_df,
+  predictors            = "outcome",
+  predictors.op         = "mean",
+  special.predictors    = lapply(pre_period, function(y) list("outcome", y, "mean")),
+  dependent             = "outcome",
+  unit.variable         = "unit_id",
+  time.variable         = "year",
+  treatment.identifier  = treated_id,
+  controls.identifier   = control_ids,
+  time.predictors.prior = pre_period,
+  time.optimize.ssr     = pre_period,
+  time.plot             = balanced_years
+)
+
+#fit synthetic control and plot the gap
+synth_out <- synth(dp)
+
+gaps.plot(
+  dataprep.res = dp,
+  synth.res    = synth_out,
+  Xlab         = "Year",
+  Ylab         = "Observed – Synthetic\nAnnual Pneumonia (<12 mo)",
+  Main         = "PCV Impact on U.S. Pneumonia"
+)
+```
+
+### **2. Estimate the treatment effect (it's fine if you are simply running someone else's code.) In 2-3 sentences explain what the treatment effect is. Be very, very clear about what the treatment effect means (i.e., is it an average, an aggregate, etc.).**
+
+```{r}
+# 1) extract the full series of treated and synthetic outcomes
+time  <- dp$tag$time.plot             # your vector of years
+Y1    <- dp$Y1plot                    # observed U.S. pneumonia cases
+Y0    <- dp$Y0plot %*% synth_out$solution.w  # synthetic U.S. cases
+
+# 2) compute the “gap” (treatment effect) in each year
+gaps  <- as.numeric(Y1 - Y0)
+
+# 3) subset to post‑intervention years (>=2010)
+post   <- time >= 2010
+post_gaps <- gaps[post]
+
+# 4) annual effects
+data.frame(
+  year = time[post],
+  effect = post_gaps
+)
+
+# 5) average and total effect over post‑vaccine period
+avg_effect   <- mean(post_gaps)
+total_effect <- sum(post_gaps)
+
+message("Average annual reduction: ", round(avg_effect,1),
+        " cases\nTotal reduction (2010–2012): ", round(total_effect,1), " cases")
+
+```
+
+### **Treatment Effect Estimate**
+
+The estimated treatment effect in 2010 is **−2,918.4 cases**, meaning there were approximately **2,918 fewer hospitalizations** for pneumonia among U.S. infants than would have occurred in the absence of the vaccine, according to the synthetic control. Since the post-intervention period only includes the year 2010, the average annual effect and the total cumulative effect are identical: −2,918.4 cases.
+
+The treatment effect is the aggregate difference (Observed – Synthetic) in total annual pneumonia hospitalizations among U.S. infants in the year 2010. It represents how many fewer cases occurred relative to a counterfactual estimate constructed from a weighted combination of control countries. Since only one post-treatment year is analyzed, the average treatment effect (ATE) and total treatment effect are the same and indicate a substantial reduction attributable to PCV introduction.
+
+### **3. Generate figures analogous to Figures 7 and Figure 8 (in the California paper) using the data you found. Discuss your results briefly.**
+
+### Placebo Test Plot (Similar to Figure 7)
+
+This plot compares the gap in pneumonia hospitalizations for the treated unit (U.S.) to those of the control units, each re-estimated as if they had received the intervention. The black line represents the U.S. (actual treatment), while the gray lines are placebo gaps for countries that did not introduce the vaccine in 2010.
+
+```{r}
+# Function to compute gaps for each control unit
+compute_placebo_gaps <- function(control_id) {
+  dp_placebo <- dataprep(
+    foo = panel_df,
+    predictors = "outcome",
+    predictors.op = "mean",
+    special.predictors = lapply(pre_period, function(y) list("outcome", y, "mean")),
+    dependent = "outcome",
+    unit.variable = "unit_id",
+    time.variable = "year",
+    treatment.identifier = control_id,
+    controls.identifier = setdiff(unique(panel_df$unit_id), control_id),
+    time.predictors.prior = pre_period,
+    time.optimize.ssr = pre_period,
+    time.plot = balanced_years
+  )
+  synth_placebo <- synth(dp_placebo)
+  Y1_placebo <- dp_placebo$Y1plot
+  Y0_placebo <- dp_placebo$Y0plot %*% synth_placebo$solution.w
+  gaps_placebo <- as.numeric(Y1_placebo - Y0_placebo)
+  return(gaps_placebo)
+}
+
+# Compute gaps for all control units
+placebo_gaps_list <- lapply(control_ids, compute_placebo_gaps)
+
+# Plot placebo gaps
+plot(time, gaps, type = "l", col = "black", lwd = 2,
+     xlab = "Year", ylab = "Gap (in cases)",
+     main = "Placebo Test: U.S. vs. Control Units")
+abline(h = 0, lty = 2)
+abline(v = 2010, lty = 2, col = "red")  # Intervention year
+
+# Add placebo gaps to the plot
+for (i in seq_along(placebo_gaps_list)) {
+  lines(time, placebo_gaps_list[[i]], col = "gray", lty = 2)
+}
+```
+
+**Interpretation**: If the post-2010 gap for the U.S. is substantially larger (in absolute value) than the gaps observed for the placebo units, this provides evidence that the observed effect is not due to chance. In this case, the U.S. shows a uniquely large drop in infant pneumonia hospitalizations relative to its synthetic control, supporting the conclusion that the PCV introduction had a real impact.
+
+### MSPE Ratio Plot (Similar to Figure 8)
+
+This plot compares the **ratio of post-treatment to pre-treatment MSPE** (Mean Squared Prediction Error) for the treated unit (U.S.) and each control unit, serving as a formal placebo-based test of significance. Each bar represents one unit’s MSPE ratio. The **vertical red line** shows the ratio for the U.S.
+
+```{r}
+compute_mspe_ratio <- function(unit_id) {
+  dp_temp <- dataprep(
+    foo = panel_df,
+    predictors = "outcome",
+    predictors.op = "mean",
+    special.predictors = lapply(pre_period, function(y) list("outcome", y, "mean")),
+    dependent = "outcome",
+    unit.variable = "unit_id",
+    time.variable = "year",
+    treatment.identifier = unit_id,
+    controls.identifier = setdiff(unique(panel_df$unit_id), unit_id),
+    time.predictors.prior = pre_period,
+    time.optimize.ssr = pre_period,
+    time.plot = balanced_years
+  )
+  synth_temp <- synth(dp_temp)
+  
+  pred <- dp_temp$Y0plot %*% synth_temp$solution.w
+  actual <- dp_temp$Y1plot
+  years <- dp_temp$tag$time.plot
+
+  #compute MSPE in pre and post periods
+  pre_idx <- years %in% pre_period
+  post_idx <- years >= 2010
+
+  pre_mspe <- mean((actual[pre_idx] - pred[pre_idx])^2)
+  post_mspe <- mean((actual[post_idx] - pred[post_idx])^2)
+
+  ratio <- post_mspe / pre_mspe
+  return(ratio)
+}
+
+#get MSPE ratios for all units (treated + controls)
+all_units <- c(treated_id, control_ids)
+ratios <- sapply(all_units, compute_mspe_ratio)
+
+#identify the treated unit’s position
+treated_ratio <- ratios[which(all_units == treated_id)]
+
+#save original margins, then expand right margin
+old_par <- par(no.readonly = TRUE)
+par(mar = c(5, 4, 4, 6))  # bottom, left, top, right
+
+#plot the histogram
+hist(ratios, breaks = 10, main = "MSPE Ratio Distribution",
+     xlab = "Post / Pre MSPE Ratio", col = "lightgray", border = "black",
+     xlim = c(0, max(ratios) + 1))  # Extend x-axis a bit
+
+#add treated unit’s ratio
+abline(v = treated_ratio, col = "red", lwd = 2)
+
+#add label further to the right and slightly down
+text(x = treated_ratio + 0.5, 
+     y = max(hist(ratios, plot = FALSE)$counts) * 0.8, 
+     labels = "U.S.", col = "red", pos = 4, cex = 1)
+
+#restore original margins
+par(old_par)
+
+
+```
+
+**Interpretation**: If the U.S. has a much larger MSPE ratio than the control units, this plot suggests that the post-intervention deviation from the synthetic control is unusually large, given how well the model fit the pre-treatment period. This strengthens the argument that the observed effect is not due to chance, but rather a real impact of the PCV introduction.
+
+In this case, the U.S. has the highest MSPE ratio, while all placebo units cluster near zero, strongly suggesting that the observed effect is distinct and likely attributable to the intervention. This visual supports the uniqueness and credibility of the treatment effect observed in your synthetic control model.
+
+**Only 2 bins:** As the analysis was conducted with only four control units, the number of placebo MSPE ratios is small and as these values are tightly clustered, they fall into a single or limited number of histogram bins. This has created a visual artifact of the small donor pool. This further emphasizes how exceptional the U.S. result is compared to all available comparisons.
+
+## **AI Statement**
+
+-   I used ChatGPT to identify and correct a date parsing error in my dataset that caused the U.S. data to be excluded during panel construction (Synthetic Control).
+
+-   I received assistance in restructuring the R code to create a balanced panel dataset suitable for synthetic control analysis using the Synth package.
+
+-   I used ChatGPT to improve strucutre, coherence, grammar and spelling in my written sections
+
+-   ChatGPT helped me debug code
+
+-   All model decisions and edits were reviewed and implemented by me. ChatGPT provided suggestions, but I wrote and executed all code, analyzed results, and curated the final outputs.
+
+I have grown to learn how to apply ChatGPT better by asking it not to give me an answer but to validate it and in most cases share my ideas to point if I am going in the right direction.
+
+![](images/Screenshot 2025-04-17 at 11.17.16 PM.png){width="400"}
+
+![](images/Screenshot 2025-04-17 at 11.17.43 PM.png){width="500"}
+
+![](images/Screenshot 2025-04-17 at 11.18.42 PM.png){width="500"}
+
+## **References**
+
+Bloom, H. S., Orr, L. L., Bell, S. H., Cave, G., Doolittle, F., Lin, W., & Bos, J. M. (1997). The Benefits and Costs of JTPA Title II-A Programs: Key Findings from the National Job Training Partnership Act Study. *The Journal of Human Resources*, *32*(3), 549–576. <https://doi.org/10.2307/146183>
+
+Bruhn, C., Hetterich, S., Schuck‐Paim, C., Esra Kürüm, Taylor, R. J., Lustig, R., Shapiro, E. D., Warren, J. L., Simonsen, L., & Weinberger, D. M. (2017). Estimating the population-level impact of vaccines using synthetic controls. *Proceedings of the National Academy of Sciences of the United States of America*, *114*(7), 1524–1529. <https://doi.org/10.1073/pnas.1612833114>
+
+Dehejia, R. H., & Wahba, S. (1999). *CPS-2 Control Group Dataset.* <https://users.nber.org/~rdehejia/nswdata2.html>
+
+U.S. Department of Labor. (1993). *The National JTPA Study*. W.E. Upjohn Institute for Employment Research. <https://www.upjohn.org/data-tools/employment-research-data-center/national-jtpa-study?utm_source=chatgpt.com>
