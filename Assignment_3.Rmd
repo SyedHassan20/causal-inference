@@ -6,6 +6,7 @@ output:
 ---
 
 ## Code Workbook on Github:
+https://github.com/SyedHassan20/causal-inference/blob/main/Assignment_3.Rmd
 
 ```{r}
 #installing packages
